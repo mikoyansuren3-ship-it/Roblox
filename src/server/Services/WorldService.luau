@@ -314,35 +314,38 @@ local function buildShopStall(world: Folder, shopType: string): Model
 		buildShovelProps(model, baseCF, cfg.Accent)
 	end
 
-	-- Big flat neon trigger pad in front of the stall.
+	-- Trigger pad: a solid dark centre ringed by a glowing neon edge. A full neon
+	-- disc z-fights with the plaza (and a second overlapping disc), which flickers
+	-- as the camera moves -- so we use a neon rim + an opaque centre on top, at
+	-- distinct heights so no two faces are ever coplanar.
 	local radius = GameConfig.World.TriggerRadius
-	local trigger = makePart({
-		name = "TriggerPad",
-		size = Vector3.new(0.5, radius * 2, radius * 2),
-		cframe = baseCF * CFrame.new(0, 0.4, -GameConfig.World.TriggerForward) * CFrame.Angles(0, 0, math.rad(90)),
+
+	-- Neon rim: slightly wider, sits lower.
+	makePart({
+		name = "TriggerRim",
+		size = Vector3.new(0.3, radius * 2 + 2.5, radius * 2 + 2.5),
+		cframe = baseCF * CFrame.new(0, 0.6, -GameConfig.World.TriggerForward) * CFrame.Angles(0, 0, math.rad(90)),
 		color = cfg.TriggerColor,
 		material = Enum.Material.Neon,
 		shape = Enum.PartType.Cylinder,
-		transparency = 0.3,
+		canCollide = false,
+		parent = model,
+	})
+
+	-- Solid dark centre on top, covering the neon middle so only the edge glows.
+	local trigger = makePart({
+		name = "TriggerPad",
+		size = Vector3.new(0.3, radius * 2 - 0.5, radius * 2 - 0.5),
+		cframe = baseCF * CFrame.new(0, 0.75, -GameConfig.World.TriggerForward) * CFrame.Angles(0, 0, math.rad(90)),
+		color = Color3.fromRGB(55, 58, 64),
+		material = Enum.Material.SmoothPlastic,
+		shape = Enum.PartType.Cylinder,
 		canCollide = false,
 		parent = model,
 	})
 	trigger:SetAttribute("ShopType", shopType)
 	trigger:SetAttribute("TriggerRadius", radius)
 	CollectionService:AddTag(trigger, "ShopTrigger")
-
-	-- Faint outer ring for a bit of polish.
-	makePart({
-		name = "TriggerRing",
-		size = Vector3.new(0.4, radius * 2 + 2, radius * 2 + 2),
-		cframe = baseCF * CFrame.new(0, 0.3, -GameConfig.World.TriggerForward) * CFrame.Angles(0, 0, math.rad(90)),
-		color = cfg.TriggerColor,
-		material = Enum.Material.Neon,
-		shape = Enum.PartType.Cylinder,
-		transparency = 0.7,
-		canCollide = false,
-		parent = model,
-	})
 
 	-- Backup interaction: press E on the pad if the auto-zone ever misses.
 	local prompt = Instance.new("ProximityPrompt")
