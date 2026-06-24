@@ -16,12 +16,14 @@ local REMOTE_EVENTS = {
 	"Notify", -- server -> client: transient toast / announcement text
 	"Reveal", -- server -> client: harvest reveal payload (rarity, item, drop)
 	"SelectSeed", -- client -> server: set which seed to plant next
+	"ShopOpened", -- server -> client: a shop was opened (e.g. after teleport); payload = shop type
 }
 
 local REMOTE_FUNCTIONS = {
 	"GetProfile", -- client -> server: fetch the caller's current data snapshot
 	"BuySeed", -- client -> server: purchase a seed; returns ok/reason
 	"BuyShovel", -- client -> server: purchase the next shovel tier; returns ok/reason
+	"TeleportToShop", -- client -> server: teleport caller to a hub shop ("Seed" | "Shovel")
 }
 
 -- Server only: build the remote folder. Safe to call once.

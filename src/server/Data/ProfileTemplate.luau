@@ -17,6 +17,7 @@ local ProfileTemplate: Types.ProfileData = {
 
 	-- Forest
 	Plots = {},
+	PlotTier = 1,
 	Shovel = "Wooden",
 	Seeds = { Oak = 3 }, -- start with a few Oak seeds so there's something to do
 

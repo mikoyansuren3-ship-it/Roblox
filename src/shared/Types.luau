@@ -30,6 +30,7 @@ export type ProfileData = {
 
 	-- Forest
 	Plots: { [number]: PlotSlot }, -- keyed by plot slot index
+	PlotTier: number, -- plot footprint tier (1 = base size); drives expansion
 	Shovel: string, -- current shovel tier id
 	Seeds: { [string]: number }, -- seedId -> count owned
 

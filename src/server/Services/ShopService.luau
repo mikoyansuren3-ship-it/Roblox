@@ -11,6 +11,7 @@ local Net = require(Shared.Net)
 local DataManager = require(script.Parent.Parent.Data.DataManager)
 local EconomyService = require(script.Parent.EconomyService)
 local FarmingService = require(script.Parent.FarmingService)
+local ShovelService = require(script.Parent.ShovelService)
 local Replication = require(script.Parent.Replication)
 
 local ShopService = {}
@@ -47,6 +48,7 @@ local function buyShovel(player: Player): (boolean, string)
 	profile.data.Shovel = nextShovel.id
 	Replication.replicate(player)
 	FarmingService.refreshLocks(player)
+	ShovelService.giveShovel(player)
 	Net.event("Notify"):FireClient(player, ("Upgraded to %s!"):format(nextShovel.name))
 	return true, "Upgraded"
 end

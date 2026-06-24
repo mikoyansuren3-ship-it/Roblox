@@ -1,11 +1,14 @@
 --!strict
--- Client HUD for the Forest loop: coins, seed bar, shovel/seed stores, Tree Dex,
--- rare-reveal moment, and toast notifications. Server stays authoritative.
+-- Client HUD for the Forest loop: coins, seed bar, shop teleports + stores,
+-- Tree Dex, rare-reveal moment, and toast notifications. Server stays
+-- authoritative; this only sends intent and renders snapshots.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local CollectionService = game:GetService("CollectionService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared.Net)
@@ -20,16 +23,23 @@ local GREEN_DARK = Color3.fromRGB(18, 28, 22)
 local GREEN_PANEL = Color3.fromRGB(26, 40, 32)
 local GOLD = Color3.fromRGB(241, 213, 120)
 local TEXT = Color3.fromRGB(228, 238, 230)
+local SEED_GREEN = Color3.fromRGB(54, 122, 78)
+local SHOVEL_BROWN = Color3.fromRGB(110, 80, 48)
 
 local state = { data = nil }
 local selectedSeedId = "Oak"
 local knownDex: { [string]: boolean } = {}
 local dexInitialized = false
 
+-- Forward declarations for things referenced before they're defined.
 local renderSeeds
 local renderTreeDex
 local renderShovelShop
 local toast
+local openShop
+local seedShopFrame: Frame
+local shovelShopFrame: Frame
+local dexFrame: Frame
 
 local function comma(n: number): string
 	local s = tostring(math.floor(n))
@@ -106,6 +116,10 @@ gui.IgnoreGuiInset = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = playerGui
 
+----------------------------------------------------------------------
+-- Coins + seed bar
+----------------------------------------------------------------------
+
 local coinsPill = Instance.new("Frame")
 coinsPill.Name = "Coins"
 coinsPill.Position = UDim2.fromOffset(16, 16)
@@ -129,7 +143,7 @@ padding(coinsLabel, 6)
 local seedBar = Instance.new("Frame")
 seedBar.Name = "SeedBar"
 seedBar.AnchorPoint = Vector2.new(0.5, 1)
-seedBar.Position = UDim2.new(0.5, 0, 1, -16)
+seedBar.Position = UDim2.new(0.5, 0, 1, -84) -- sits above the Roblox tool hotbar
 seedBar.Size = UDim2.fromOffset(560, 64)
 seedBar.BackgroundColor3 = GREEN_DARK
 seedBar.BackgroundTransparency = 0.1
@@ -202,17 +216,9 @@ renderSeeds = function(data)
 	end
 end
 
-local function closeModals(except: Frame?)
-	if dexFrame ~= except then
-		dexFrame.Visible = false
-	end
-	if shovelShopFrame ~= except then
-		shovelShopFrame.Visible = false
-	end
-	if seedShopFrame ~= except then
-		seedShopFrame.Visible = false
-	end
-end
+----------------------------------------------------------------------
+-- Shop + Dex modals
+----------------------------------------------------------------------
 
 local function makeModal(name: string, title: string, height: number): (Frame, TextButton, ScrollingFrame)
 	local frame = Instance.new("Frame")
@@ -272,22 +278,124 @@ local function makeModal(name: string, title: string, height: number): (Frame, T
 	return frame, close, list
 end
 
-local shovelShopButton = Instance.new("TextButton")
-shovelShopButton.Name = "ShovelShopButton"
-shovelShopButton.AnchorPoint = Vector2.new(1, 0)
-shovelShopButton.Position = UDim2.new(1, -16, 0, 16)
-shovelShopButton.Size = UDim2.fromOffset(132, 44)
-shovelShopButton.BackgroundColor3 = Color3.fromRGB(96, 72, 48)
-shovelShopButton.BorderSizePixel = 0
-shovelShopButton.Text = "Shovels"
-shovelShopButton.Font = Enum.Font.GothamBold
-shovelShopButton.TextSize = 18
-shovelShopButton.TextColor3 = TEXT
-shovelShopButton.Parent = gui
-corner(shovelShopButton, 12)
+local shovelList: ScrollingFrame
+local seedList: ScrollingFrame
+do
+	local frame, _, list = makeModal("ShovelShop", "Shovel Store", 460)
+	shovelShopFrame = frame
+	shovelList = list
+end
+do
+	local frame, _, list = makeModal("SeedShop", "Tree Seed Store", 460)
+	seedShopFrame = frame
+	seedList = list
+end
 
-local shovelShopFrame, _, shovelList = makeModal("ShovelShop", "Shovel Store", 460)
-local seedShopFrame, _, seedList = makeModal("SeedShop", "Tree Seed Store", 460)
+-- Tree Dex frame.
+dexFrame = Instance.new("Frame")
+dexFrame.Name = "TreeDex"
+dexFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+dexFrame.Position = UDim2.fromScale(0.5, 0.5)
+dexFrame.Size = UDim2.fromOffset(540, 500)
+dexFrame.BackgroundColor3 = GREEN_DARK
+dexFrame.BorderSizePixel = 0
+dexFrame.Visible = false
+dexFrame.Parent = gui
+corner(dexFrame, 16)
+
+local dexTitle = Instance.new("TextLabel")
+dexTitle.BackgroundTransparency = 1
+dexTitle.Position = UDim2.fromOffset(16, 12)
+dexTitle.Size = UDim2.new(1, -32, 0, 28)
+dexTitle.Font = Enum.Font.GothamBold
+dexTitle.TextSize = 22
+dexTitle.TextXAlignment = Enum.TextXAlignment.Left
+dexTitle.TextColor3 = TEXT
+dexTitle.Text = "Tree Dex"
+dexTitle.Parent = dexFrame
+
+local dexProgress = Instance.new("TextLabel")
+dexProgress.Name = "Progress"
+dexProgress.BackgroundTransparency = 1
+dexProgress.Position = UDim2.fromOffset(16, 40)
+dexProgress.Size = UDim2.new(1, -32, 0, 20)
+dexProgress.Font = Enum.Font.GothamMedium
+dexProgress.TextSize = 14
+dexProgress.TextXAlignment = Enum.TextXAlignment.Left
+dexProgress.TextColor3 = GOLD
+dexProgress.Text = "0 / 13 discovered"
+dexProgress.Parent = dexFrame
+
+local dexClose = Instance.new("TextButton")
+dexClose.AnchorPoint = Vector2.new(1, 0)
+dexClose.Position = UDim2.new(1, -12, 0, 12)
+dexClose.Size = UDim2.fromOffset(28, 28)
+dexClose.BackgroundColor3 = Color3.fromRGB(120, 60, 60)
+dexClose.BorderSizePixel = 0
+dexClose.Text = "X"
+dexClose.Font = Enum.Font.GothamBold
+dexClose.TextSize = 16
+dexClose.TextColor3 = TEXT
+dexClose.Parent = dexFrame
+corner(dexClose, 8)
+
+local dexList = Instance.new("ScrollingFrame")
+dexList.Name = "List"
+dexList.Position = UDim2.fromOffset(16, 72)
+dexList.Size = UDim2.new(1, -32, 1, -88)
+dexList.BackgroundTransparency = 1
+dexList.BorderSizePixel = 0
+dexList.ScrollBarThickness = 4
+dexList.CanvasSize = UDim2.new()
+dexList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+dexList.Parent = dexFrame
+
+local dexGrid = Instance.new("UIGridLayout")
+dexGrid.CellSize = UDim2.fromOffset(156, 118)
+dexGrid.CellPadding = UDim2.fromOffset(8, 8)
+dexGrid.SortOrder = Enum.SortOrder.LayoutOrder
+dexGrid.Parent = dexList
+
+-- Now that all three modals exist, closeModals can capture them safely.
+local function closeModals(except: Frame?)
+	if dexFrame ~= except then
+		dexFrame.Visible = false
+	end
+	if shovelShopFrame ~= except then
+		shovelShopFrame.Visible = false
+	end
+	if seedShopFrame ~= except then
+		seedShopFrame.Visible = false
+	end
+end
+
+local function openSeedShop()
+	if seedShopFrame.Visible then
+		return
+	end
+	closeModals(seedShopFrame)
+	seedShopFrame.Visible = true
+end
+
+local function openShovelShop()
+	if shovelShopFrame.Visible then
+		return
+	end
+	closeModals(shovelShopFrame)
+	shovelShopFrame.Visible = true
+end
+
+openShop = function(shopType: string)
+	if shopType == "Seed" then
+		openSeedShop()
+	elseif shopType == "Shovel" then
+		openShovelShop()
+	end
+end
+
+----------------------------------------------------------------------
+-- Shop contents
+----------------------------------------------------------------------
 
 type ShovelRow = {
 	row: Frame,
@@ -347,7 +455,7 @@ local function buildShovelShopRows()
 		buy.AnchorPoint = Vector2.new(1, 0.5)
 		buy.Position = UDim2.new(1, -8, 0.5, 0)
 		buy.Size = UDim2.fromOffset(118, 32)
-		buy.BackgroundColor3 = Color3.fromRGB(96, 72, 48)
+		buy.BackgroundColor3 = SHOVEL_BROWN
 		buy.BorderSizePixel = 0
 		buy.Font = Enum.Font.GothamBold
 		buy.TextSize = 12
@@ -445,7 +553,7 @@ local function buildSeedShopRows()
 			buy.AnchorPoint = Vector2.new(1, 0.5)
 			buy.Position = UDim2.new(1, -8, 0.5, 0)
 			buy.Size = UDim2.fromOffset(120, 32)
-			buy.BackgroundColor3 = Color3.fromRGB(54, 122, 78)
+			buy.BackgroundColor3 = SEED_GREEN
 			buy.BorderSizePixel = 0
 			buy.Font = Enum.Font.GothamBold
 			buy.TextSize = 13
@@ -464,59 +572,54 @@ local function buildSeedShopRows()
 	end
 end
 
-shovelShopButton.Activated:Connect(function()
-	local opening = not shovelShopFrame.Visible
-	closeModals(if opening then shovelShopFrame else nil)
-	shovelShopFrame.Visible = opening
-end)
+----------------------------------------------------------------------
+-- HUD buttons: shop teleports (right) + Tree Dex (left)
+----------------------------------------------------------------------
 
-local function openSeedShop()
-	if seedShopFrame.Visible then
-		return
-	end
-	closeModals(seedShopFrame)
-	seedShopFrame.Visible = true
-end
+local teleportStrip = Instance.new("Frame")
+teleportStrip.Name = "ShopTeleports"
+teleportStrip.AnchorPoint = Vector2.new(1, 0)
+teleportStrip.Position = UDim2.new(1, -16, 0, 16)
+teleportStrip.Size = UDim2.fromOffset(150, 100)
+teleportStrip.BackgroundTransparency = 1
+teleportStrip.Parent = gui
 
-local function isInsideSeedTrigger(trigger: BasePart, position: Vector3): boolean
-	local radius = trigger:GetAttribute("TriggerRadius")
-	if typeof(radius) ~= "number" then
-		radius = math.max(trigger.Size.X, trigger.Size.Z) / 2
-	end
-	local localPos = trigger.CFrame:PointToObjectSpace(position)
-	return (localPos.X * localPos.X + localPos.Z * localPos.Z) <= radius * radius
-		and math.abs(localPos.Y) <= 8
-end
+local stripLayout = Instance.new("UIListLayout")
+stripLayout.FillDirection = Enum.FillDirection.Vertical
+stripLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+stripLayout.Padding = UDim.new(0, 8)
+stripLayout.SortOrder = Enum.SortOrder.LayoutOrder
+stripLayout.Parent = teleportStrip
 
-task.spawn(function()
-	local world = workspace:WaitForChild("World", 60)
-	if not world then
-		return
-	end
-	local shop = world:WaitForChild("SeedShop", 30)
-	if not shop then
-		return
-	end
-	local trigger = shop:WaitForChild("TriggerPad", 30)
-	if not trigger or not trigger:IsA("BasePart") then
-		return
-	end
+local function makeTeleportButton(text: string, color: Color3, shopType: string, order: number)
+	local btn = Instance.new("TextButton")
+	btn.Name = shopType .. "Teleport"
+	btn.LayoutOrder = order
+	btn.Size = UDim2.fromOffset(150, 44)
+	btn.BackgroundColor3 = color
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = true
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 16
+	btn.TextColor3 = TEXT
+	btn.Text = text
+	btn.Parent = teleportStrip
+	corner(btn, 12)
 
-	local wasInside = false
-	RunService.Heartbeat:Connect(function()
-		local character = player.Character
-		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-		if not hrp then
-			wasInside = false
-			return
+	btn.Activated:Connect(function()
+		local ok, success = pcall(function()
+			return Net.func("TeleportToShop"):InvokeServer(shopType)
+		end)
+		-- ShopOpened from the server also opens it; opening here keeps it snappy.
+		if ok and success then
+			openShop(shopType)
 		end
-		local inside = isInsideSeedTrigger(trigger, hrp.Position)
-		if inside and not wasInside then
-			openSeedShop()
-		end
-		wasInside = inside
 	end)
-end)
+	return btn
+end
+
+makeTeleportButton("Seed Shop", SEED_GREEN, "Seed", 1)
+makeTeleportButton("Shovel Shop", SHOVEL_BROWN, "Shovel", 2)
 
 local dexButton = Instance.new("TextButton")
 dexButton.Name = "TreeDexButton"
@@ -530,70 +633,6 @@ dexButton.TextSize = 18
 dexButton.TextColor3 = TEXT
 dexButton.Parent = gui
 corner(dexButton, 12)
-
-local dexFrame = Instance.new("Frame")
-dexFrame.Name = "TreeDex"
-dexFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-dexFrame.Position = UDim2.fromScale(0.5, 0.5)
-dexFrame.Size = UDim2.fromOffset(540, 500)
-dexFrame.BackgroundColor3 = GREEN_DARK
-dexFrame.BorderSizePixel = 0
-dexFrame.Visible = false
-dexFrame.Parent = gui
-corner(dexFrame, 16)
-
-local dexTitle = Instance.new("TextLabel")
-dexTitle.BackgroundTransparency = 1
-dexTitle.Position = UDim2.fromOffset(16, 12)
-dexTitle.Size = UDim2.new(1, -32, 0, 28)
-dexTitle.Font = Enum.Font.GothamBold
-dexTitle.TextSize = 22
-dexTitle.TextXAlignment = Enum.TextXAlignment.Left
-dexTitle.TextColor3 = TEXT
-dexTitle.Text = "Tree Dex"
-dexTitle.Parent = dexFrame
-
-local dexProgress = Instance.new("TextLabel")
-dexProgress.Name = "Progress"
-dexProgress.BackgroundTransparency = 1
-dexProgress.Position = UDim2.fromOffset(16, 40)
-dexProgress.Size = UDim2.new(1, -32, 0, 20)
-dexProgress.Font = Enum.Font.GothamMedium
-dexProgress.TextSize = 14
-dexProgress.TextXAlignment = Enum.TextXAlignment.Left
-dexProgress.TextColor3 = GOLD
-dexProgress.Text = "0 / 13 discovered"
-dexProgress.Parent = dexFrame
-
-local dexClose = Instance.new("TextButton")
-dexClose.AnchorPoint = Vector2.new(1, 0)
-dexClose.Position = UDim2.new(1, -12, 0, 12)
-dexClose.Size = UDim2.fromOffset(28, 28)
-dexClose.BackgroundColor3 = Color3.fromRGB(120, 60, 60)
-dexClose.BorderSizePixel = 0
-dexClose.Text = "X"
-dexClose.Font = Enum.Font.GothamBold
-dexClose.TextSize = 16
-dexClose.TextColor3 = TEXT
-dexClose.Parent = dexFrame
-corner(dexClose, 8)
-
-local dexList = Instance.new("ScrollingFrame")
-dexList.Name = "List"
-dexList.Position = UDim2.fromOffset(16, 72)
-dexList.Size = UDim2.new(1, -32, 1, -88)
-dexList.BackgroundTransparency = 1
-dexList.BorderSizePixel = 0
-dexList.ScrollBarThickness = 4
-dexList.CanvasSize = UDim2.new()
-dexList.AutomaticCanvasSize = Enum.AutomaticSize.Y
-dexList.Parent = dexFrame
-
-local dexGrid = Instance.new("UIGridLayout")
-dexGrid.CellSize = UDim2.fromOffset(156, 118)
-dexGrid.CellPadding = UDim2.fromOffset(8, 8)
-dexGrid.SortOrder = Enum.SortOrder.LayoutOrder
-dexGrid.Parent = dexList
 
 renderTreeDex = function(data)
 	local dex = data.TreeDex or {}
@@ -681,10 +720,14 @@ dexClose.Activated:Connect(function()
 	dexFrame.Visible = false
 end)
 
+----------------------------------------------------------------------
+-- Toast + reveal
+----------------------------------------------------------------------
+
 toast = function(text)
 	local label = Instance.new("TextLabel")
 	label.AnchorPoint = Vector2.new(0.5, 1)
-	label.Position = UDim2.new(0.5, 0, 1, -96)
+	label.Position = UDim2.new(0.5, 0, 1, -156) -- above the seed bar + hotbar
 	label.Size = UDim2.fromOffset(440, 36)
 	label.BackgroundColor3 = GREEN_DARK
 	label.BackgroundTransparency = 0.1
@@ -785,6 +828,74 @@ local function reveal(payload)
 	end)
 end
 
+----------------------------------------------------------------------
+-- Shop zone detection (unified ShopTrigger pads)
+----------------------------------------------------------------------
+
+-- World-space XZ distance from each tagged pad's center; robust regardless of
+-- the pad's part shape/orientation (the old local-space check was fragile).
+local insideState: { [BasePart]: boolean } = {}
+
+local function watchTrigger(inst: Instance)
+	if inst:IsA("BasePart") then
+		insideState[inst] = false
+	end
+end
+
+for _, t in CollectionService:GetTagged("ShopTrigger") do
+	watchTrigger(t)
+end
+CollectionService:GetInstanceAddedSignal("ShopTrigger"):Connect(watchTrigger)
+CollectionService:GetInstanceRemovedSignal("ShopTrigger"):Connect(function(inst)
+	insideState[inst :: BasePart] = nil
+end)
+
+RunService.Heartbeat:Connect(function()
+	local character = player.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		for trigger in insideState do
+			insideState[trigger] = false
+		end
+		return
+	end
+	local pos = hrp.Position
+	for trigger, wasInside in insideState do
+		if trigger.Parent then
+			local radius = trigger:GetAttribute("TriggerRadius")
+			if typeof(radius) ~= "number" then
+				radius = 14
+			end
+			local dx = pos.X - trigger.Position.X
+			local dz = pos.Z - trigger.Position.Z
+			local inside = (dx * dx + dz * dz) <= radius * radius and math.abs(pos.Y - trigger.Position.Y) <= 14
+			if inside and not wasInside then
+				local shopType = trigger:GetAttribute("ShopType")
+				if typeof(shopType) == "string" then
+					openShop(shopType)
+				end
+			end
+			insideState[trigger] = inside
+		end
+	end
+end)
+
+-- Backup: pressing E on a pad's ProximityPrompt opens the matching shop.
+ProximityPromptService.PromptTriggered:Connect(function(prompt, triggerPlayer)
+	if triggerPlayer ~= player then
+		return
+	end
+	local pad = prompt.Parent
+	local shopType = pad and pad:IsA("BasePart") and pad:GetAttribute("ShopType")
+	if typeof(shopType) == "string" then
+		openShop(shopType)
+	end
+end)
+
+----------------------------------------------------------------------
+-- Render + networking
+----------------------------------------------------------------------
+
 local function render(data)
 	if not data then
 		return
@@ -804,6 +915,11 @@ Net.event("Notify").OnClientEvent:Connect(function(text)
 	end
 end)
 Net.event("Reveal").OnClientEvent:Connect(reveal)
+Net.event("ShopOpened").OnClientEvent:Connect(function(shopType)
+	if typeof(shopType) == "string" then
+		openShop(shopType)
+	end
+end)
 
 buildShovelShopRows()
 buildSeedShopRows()

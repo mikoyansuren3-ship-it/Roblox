@@ -23,15 +23,21 @@ local Replication = require(script.Parent.Replication)
 
 local FarmingService = {}
 
--- Slot pad layout on the 48x48 base: 3 columns x 2 rows (local offsets).
-local SLOT_OFFSETS: { Vector3 } = {
-	Vector3.new(-15, 1, -9),
-	Vector3.new(0, 1, -9),
-	Vector3.new(15, 1, -9),
-	Vector3.new(-15, 1, 9),
-	Vector3.new(0, 1, 9),
-	Vector3.new(15, 1, 9),
-}
+-- Slot pads sit on the soil in a 3-column x 2-row layout, positioned as a
+-- fraction of the plot footprint so they spread to fill larger plots instead of
+-- bunching in the middle.
+local function slotOffsets(footprint: number): { Vector3 }
+	local fx = footprint * 0.3125 -- column spread
+	local fz = footprint * 0.1875 -- row spread
+	return {
+		Vector3.new(-fx, 1, -fz),
+		Vector3.new(0, 1, -fz),
+		Vector3.new(fx, 1, -fz),
+		Vector3.new(-fx, 1, fz),
+		Vector3.new(0, 1, fz),
+		Vector3.new(fx, 1, fz),
+	}
+end
 
 type SlotRuntime = {
 	pad: BasePart,
@@ -46,6 +52,7 @@ type SlotRuntime = {
 
 type PlotRuntime = {
 	base: BasePart,
+	footprint: number,
 	slots: { [number]: SlotRuntime },
 }
 
@@ -355,12 +362,12 @@ end
 -- Plot setup / teardown
 ----------------------------------------------------------------------
 
-local function makeSlot(player: Player, plot: PlotRuntime, index: number)
+local function makeSlot(player: Player, plot: PlotRuntime, index: number, offset: Vector3)
 	local pad = Instance.new("Part")
 	pad.Name = "Slot_" .. index
 	pad.Anchored = true
 	pad.Size = Vector3.new(9, 1, 9)
-	pad.CFrame = plot.base.CFrame * CFrame.new(SLOT_OFFSETS[index])
+	pad.CFrame = plot.base.CFrame * CFrame.new(offset)
 	pad.Material = Enum.Material.Ground
 	pad.Color = Color3.fromRGB(120, 90, 60)
 	pad.TopSurface = Enum.SurfaceType.Smooth
@@ -431,12 +438,15 @@ function FarmingService.onPlotReady(player: Player, plotModel: Model)
 		return
 	end
 
-	local plot: PlotRuntime = { base = base, slots = {} }
+	local footprint = base.Size.X
+	local plot: PlotRuntime = { base = base, footprint = footprint, slots = {} }
 	runtime[player.UserId] = plot
 	selectedSeed[player.UserId] = selectedSeed[player.UserId] or "Oak"
 
-	for index = 1, Shovels.MaxSlots do
-		makeSlot(player, plot, index)
+	local offsets = slotOffsets(footprint)
+	local count = math.min(Shovels.MaxSlots, #offsets)
+	for index = 1, count do
+		makeSlot(player, plot, index, offsets[index])
 	end
 
 	-- Restore saved plantings.
@@ -457,14 +467,44 @@ function FarmingService.onPlotReady(player: Player, plotModel: Model)
 		end
 	end
 
-	for index = 1, Shovels.MaxSlots do
+	for index = 1, count do
 		refreshSlot(player, index)
 	end
 end
 
 function FarmingService.releasePlot(player: Player)
+	local plot = runtime[player.UserId]
+	if plot then
+		-- Destroy our slot pads (and their plants/prompts) so the prebuilt plot
+		-- is clean for the next player who claims it.
+		for _, slot in plot.slots do
+			if slot.pad then
+				slot.pad:Destroy()
+			end
+		end
+	end
 	runtime[player.UserId] = nil
 	selectedSeed[player.UserId] = nil
+end
+
+-- Reposition slot pads after the plot footprint changes (expansion), preserving
+-- any planted state. Pair this with PlotService.applyPlotSize.
+function FarmingService.repositionSlots(player: Player)
+	local plot = runtime[player.UserId]
+	if not plot then
+		return
+	end
+	local footprint = plot.base.Size.X
+	plot.footprint = footprint
+	local offsets = slotOffsets(footprint)
+	for index, slot in plot.slots do
+		local target = plot.base.CFrame * CFrame.new(offsets[index])
+		local delta = target.Position - slot.pad.Position
+		slot.pad.CFrame = target
+		if slot.plant then
+			slot.plant:PivotTo(slot.plant:GetPivot() + delta)
+		end
+	end
 end
 
 function FarmingService.setSelectedSeed(player: Player, treeId: string)
@@ -489,7 +529,7 @@ function FarmingService.refreshLocks(player: Player)
 	if not plot then
 		return
 	end
-	for index = 1, Shovels.MaxSlots do
+	for index in plot.slots do
 		refreshSlot(player, index)
 	end
 end
