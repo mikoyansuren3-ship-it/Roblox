@@ -1,0 +1,16 @@
+# Rojo / Roblox
+*.rbxl
+*.rbxlx
+*.rbxl.lock
+*.rbxlx.lock
+
+# Build output
+build/
+*.rbxm
+*.rbxmx
+
+# Tooling
+.rokit/
+
+# OS
+.DS_Store

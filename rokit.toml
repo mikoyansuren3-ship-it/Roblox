@@ -1,0 +1,6 @@
+# Toolchain manifest for Restore a Planet.
+# Install Rokit (https://github.com/rojo-rbx/rokit), then run `rokit install`
+# in this folder to fetch the pinned tools below.
+
+[tools]
+rojo = "rojo-rbx/rojo@7.4.4"
