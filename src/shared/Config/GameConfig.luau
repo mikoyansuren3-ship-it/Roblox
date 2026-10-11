@@ -19,7 +19,7 @@ local GameConfig = {
 
 		Terrain = {
 			Center = Vector3.new(0, -16, 0),
-			Size = Vector3.new(1500, 32, 1500), -- large playable area centered on the hub
+			Size = Vector3.new(900, 32, 900), -- large playable area centered on the hub
 			GrassColor = Color3.fromRGB(112, 196, 86), -- bright, saturated cartoon grass
 		},
 
@@ -64,8 +64,8 @@ local GameConfig = {
 		Grid = {
 			Columns = 4,
 			Rows = 2,
-			ColumnSpacing = 360, -- X centers: -540, -180, 180, 540 (spread far apart)
-			RowSpacing = 540, -- |Z| of each row (north = +, south = -)
+			ColumnSpacing = 140, -- X centers: -210, -70, 70, 210
+			RowSpacing = 150, -- |Z| of each row (north = +, south = -)
 		},
 		BaseSize = 96, -- tier 1 footprint (studs square) -- big plots
 		SizeTiers = { 96, 144, 192 }, -- expandable footprints (purchase flow is future work)
